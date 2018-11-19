@@ -1,0 +1,227 @@
+---
+title: "Exploring the BRFSS data"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+```
+
+### Load data
+```{r load-data}
+load("brfss2013.RData")
+```
+
+
+
+* * *
+
+## Part 1: Data
+The Behavioral Risk Factor Surveillance System (BRFSS) is a collaborative project between all the states and territories of the US. The objective is to collect uniform, state-specific data on behaviors and practices that have connections with injuries and chronic / infectious diseases.
+The data is collected through surveys by landline and cellular telephone. The interviewees are randomly selected adults. So, the result can be generalized to the population. 
+
+The dataset is from the year 2013. It has 491775 responses with 330 variables.
+
+**Note:**  
+- One source of bias is from "voluntary response" which the sample only consists of people who have strong opinions on the issue; since many people can be unavailable to take the survey call or even unwillingly take part in the survey.  
+- Since BRFSS is an observation study, no causality can be inferred from the result.
+
+
+* * *
+
+## Part 2: Research questions
+
+**Research quesion 1:**  
+Media otten shows depressed or stressed characters seeking comfort through smoking and drinking. Concern arises as viewers might associate those actions as the solution for their mental problem. To see if the concern is valid, we will check if alcohol (alcday5, avedrnk2) and cigarette (smokday2) consumsion correlates positively with bad mental health (menthlth).
+
+**Research quesion 2:**  
+"Should I pursuit higher education?", "Does my salary keep increasing as long as I work?". Does age (X_age_g) and education (X_educag) have any connection with one's income (income2)? Let's explore the data to see if those common questions can be answer.
+
+**Research quesion 3:**  
+Many young people nowadays don't want to have children, stating reasons such as lost of freedom, stress, less sleep, etc. Why does having kids is associate with such negative impacts? Is it true at all? To look upon this matter, we will explore the correlation between mental health (menthlth) with the number of kids (children) and income (income2).
+
+* * *
+
+## Part 3: Exploratory data analysis
+###Research quesion 1:
+#### First, let extract the necessary data and explore their values
+```{r data-smoke-drink}
+mental_smoke_drink <- brfss2013 %>%
+  select(menthlth, alcday5, avedrnk2, smokday2)
+
+mental_smoke_drink %>%
+  str()
+```
+- menthlth: the number of days in the last 30 days that have any mental health problem.
+- alcday5: the number of days per week or month in the last 30 days that have alcohol consumsion
+- avedrnk2: the average alcohol drinks per day in the last 30 days. One drink is equivalent to a 12-ounce beer, a 5-ounce glass of wine, or a drink with one shot of liquor. 40 ounce beer would count as 3 drinks, or a cocktail drink with 2 shots would count as 2 drinks.
+- smokday2: the frequency of days smoking. 3 levels from Not at all to Every day.
+
+#### Then, let's explore the correlation between smoking and bad mental health
+```{r smoke-mental}
+mental_smoke_summarise <- mental_smoke_drink %>%
+  select(smokday2, menthlth) %>%
+  filter(!is.na(menthlth), !is.na(smokday2)) %>%
+  mutate(smok_intensity = plyr::mapvalues(smokday2, c("Not at all", "Some days", "Every day"), c(0, 1, 2))) %>%
+  group_by(smok_intensity, smokday2) %>%
+  summarise(num_response = n(), avg_bad_mental_day = mean(menthlth))
+
+mental_smoke_summarise
+```
+For better view of the result, let's visuallize it: 
+```{r visualize-smoke-mental}
+ggplot(data=mental_smoke_summarise, aes(x=as.numeric(as.character(smok_intensity)), y=avg_bad_mental_day)) +
+  geom_point() +
+  geom_line()
+```
+
+The intensity of smoking increases as the average days of bad mental health increase. Showing a positive correlation between bad mental health and smoking.
+
+#### Similarly, we will check the correlation between mental health and drinking
+```{r drink-mental}
+mental_drink_summarise <- mental_smoke_drink %>%
+  select(alcday5, avedrnk2, menthlth) %>%
+  filter(!is.na(menthlth), !is.na(alcday5)) %>%
+  mutate(drink_freq = ifelse(alcday5 < 200, (alcday5 %% 10) / 7, (alcday5 %% 100) / 30)) %>%
+  mutate(drinks_monthly = ceiling(drink_freq * 30 * ifelse(is.na(avedrnk2), 0, avedrnk2))) %>%
+  group_by(drinks_monthly) %>%
+  summarise(num_response = n(), avg_bad_mental_day = mean(menthlth))
+
+mental_drink_summarise
+```
+
+Exploring the result, we can see some data with very small number of responses. This can lead to the average result being very small (0) or big (30). To make the result more generalized, we will remove the special cases with number of response less than 100.
+```{r}
+mental_drink_summarise <- mental_drink_summarise %>%
+  filter(num_response >= 100)
+
+mental_drink_summarise
+```
+
+
+Visualize:
+```{r visualize-drink-mental}
+ggplot(data=mental_drink_summarise, aes(x=drinks_monthly, y=avg_bad_mental_day)) +
+  geom_point() +
+  geom_line()
+```
+
+Although the points are scattered at the beginning of the line, overall, we can see a positive correlation between bad mental health and drinking.
+
+**Summary:**  
+Bad mental health do have a positive correlation with smoking and drinking. So the concern, that the media may lead depressed viewers to increase consumming alcohol and cigarettes, is valid in some way.
+But to conclude that the media is the cause is not possible for this observational study. Other experimental studies are needed to discover the cause of this phenomenon.
+
+### Research quesion 2:  
+#### First let's extract the data and explore their values
+```{r age-edu-income}
+income_age_edu <- brfss2013 %>%
+  select(income2, X_age_g, X_educag)
+
+income_age_edu %>%
+  str()
+```
+- income2: the annual income level of the household. 8 levels from less than \$10,000 to more than \$75,000.
+- X_age_g: the age range. 6 ranges from 18 to more than 65.
+- X_educag: the level of education completed. 4 levels from not graduated highschool to college.
+
+#### Then, calculate the average income of each age range and education level
+With income column contain range of value, it's difficult for calculating or plotting. In order to find the correlation, we will simplify the dataset by transforming income to discrete value which is the middle value of that income range.
+```{r transform-income}
+fromVals <- c("Less than $10,000", "Less than $15,000", "Less than $20,000", "Less than $25,000", "Less than $35,000", "Less than $50,000", "Less than $75,000", "$75,000 or more")
+toVals <- c(5000, 12500, 17500, 22500, 30000, 42500, 62500, 87500)
+
+income_age_edu_disc <- income_age_edu %>%
+  filter(!is.na(income2), !is.na(X_age_g), !is.na(X_educag)) %>%
+  group_by(income2, X_age_g, X_educag) %>%
+  summarise(count = n()) %>%
+  mutate(income_disc = plyr::mapvalues(income2, fromVals, toVals))
+
+income_age_edu_disc
+```
+Now we can calculate the average income for each age range and education level
+```{r avg-income}
+age_edu_avgincome <- income_age_edu_disc %>%
+  mutate(total_income = as.numeric(as.character(income_disc)) * count) %>%
+  group_by(X_age_g, X_educag) %>%
+  summarise(avg_income = sum(total_income) / sum(count))
+
+age_edu_avgincome
+```
+#### Visualize the dataset onto a chart for better view of the correlation
+```{r visualize-edu-age-income}
+ggplot(data=age_edu_avgincome, aes(x=X_age_g, y=avg_income, group=factor(X_educag), colour=X_educag)) +
+  geom_line() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+Based on the result, we can say that the higher the education level, the higher the income, or the higher the chance to have high income. Or, the income has a positive correlation with education level.
+As for income and age, there is no clear correlation. One explaination is this is the data of 2013, not a time-series data. So, we can't intepret the lines for trends, but we can only compare points of income of one age range to the others for the comparison between generations. At 2013, generation x is in the lead, while generation y has just started so their income is lower.
+
+**Summary:**  
+This result doesn't mean that high education leads to high income. There are so many more factors that contribute to one's success.  
+But based on the data, and on the correlation it suggests, high reward is much more likely to happen to people with high education.  
+So, if you or your family can afford college or higher, you should go for it. Or if you are currently in one, it's recommended that you complete your degree. 
+
+
+### Research quesion 3:
+#### First, extract the data and explore their values
+```{r children-mental-income}
+children_mental_income <- brfss2013 %>%
+  select(children, menthlth, income2)
+
+children_mental_income %>%
+  str()
+```
+- menthlth: the number of days in the last 30 days that have any mental health problem.
+- children: the number Of children, age less than 18, in the household.
+- income2: the annual income level of the household. 8 levels from less than \$10,000 to more than \$75,000.
+
+#### Then, calculate average bad mental days for each group of income and children number
+```{r avg-bad-mental}
+avg_bad_mental <- children_mental_income %>%
+  filter(!is.na(children), !is.na(income2), !is.na(menthlth)) %>%
+  group_by(children, income2) %>%
+  summarise(num_resp = n(), avg_bad_day = mean(menthlth))
+
+avg_bad_mental
+```
+Starting from 6 children, the number of responses is really small compared to the whole sample.
+```{r small-portion-7-children}
+avg_bad_mental %>%
+  mutate(is_more = ifelse(children >= 6, "More than or equal", "Less than")) %>%
+  group_by(is_more) %>%
+  summarise(n = sum(num_resp)) %>%
+  mutate(portion = n / sum(n))
+```
+
+In order to remove noises that may occur from data with childer more than or equal to 6, we will filter those data out. Since the portion of those data is only 0.26% of the entire sample, we don't fear of removing important characteristics of the population.
+```{r simplify-dataset-less-children}
+avg_bad_mental <- avg_bad_mental %>%
+  filter(children < 6)
+
+avg_bad_mental
+```
+
+
+#### Visualize for better view of correlation between variables
+```{r visualize-children-income-mental}
+ggplot(data=avg_bad_mental, aes(x=children, y=avg_bad_day, group=factor(income2), colour=income2)) +
+  geom_line()
+```
+
+The number of bad mental day of the had "kids group" is indeed more than the "no kid" group. 
+But based the association between kids and stress, the number of bad mental day should continue to increase as the number of kids increase. Yet, the data show no such trend.
+
+**Summary:**
+There is no clear correlation between bad mental condition and number of kids in a household. The problem may lie somewhere else, for example the income level.  
+So, don't blame the kids for your mental problem. Try to find and fix the sources. Those little angels (or little devils) don't deserve the hate.
