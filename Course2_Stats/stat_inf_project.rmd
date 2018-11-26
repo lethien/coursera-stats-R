@@ -1,0 +1,191 @@
+---
+title: "Statistical inference with the GSS data"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(statsr)
+```
+
+### Load data
+
+Make sure your data and R Markdown files are in the same directory. When loaded
+your data file will be called `gss`. Delete this note when before you submit 
+your work. 
+
+```{r load-data}
+load("gss.Rdata")
+```
+
+
+
+* * *
+
+## Part 1: Data
+The dataset used in this report is a subset of General Social Survey (GSS) Cummulative File. It contains 57061 responses from 1972 to 2012. Futhermore, missing data has been removed and some variables have been factorized by Duke University's staffs, in order to facilitate analysis using R.  
+
+#### On Generabizability:  
+GSS has been conducted periodically from 1972. Respondents, who are adults (18+) living in households, are chosen randomly across the US. Since random sampling is used, the analysis on this dataset can be generalized to the population of the US.
+Note that one possible source of bias might come from "Voluntary Response" since taking part in the survey is optional and time-consuming. So a large proportion can be people who are strongly interested in GSS's purpose or survey's questions.  
+
+#### On Causality:  
+The GSS's result is only an observation on a small protion of the US population. And the same set of questions is given to the survey takers, no random assignment was used. So, no causality can be extract from the analysis on this datset.
+
+
+* * *
+
+## Part 2: Research question
+What does it take for one to become successful in life? How can some people get so far ahead, some at a very young age? While some struggle for their whole life making ends meet day by day, month by month?  
+Many people have been researching on this phenomenon, trying to compile guidelines to become successful. As the result, many self-help books have been published, and some even became best-sellers. This indicate a large proportion of the population is interested in this topic.  
+While every author tries to differentiate themself from the others, one idea seems to appear consistently throughout the years across many books, which is one person can change his or her life by first changing the way he or she think.  
+
+#### So, does a person's mindset really have connection with one's success?  
+
+To analyse this question, two variables from the GSS dataset will be considered:  
+
+- 'coninc', which later will be factorized to represents the level of success.  
+- 'getahead', represents a common kind of mindset; which is the believe that the most important factor to one' success is hardwork, or connections, or both, or something else.  
+
+And since we won't consider the change of variables over time, only the latest data, which is from the year 2012, will be analysed.
+
+
+* * *
+
+## Part 3: Exploratory data analysis  
+### 1. Prepare the dataset:
+#### First, extract the necessary data from gss dataset, and store them in 'gss_2012' variable:  
+Since a household income can come from both the husband and wife, we will check this condition then divide the income by 2 to get the income per person.  
+```{r extract-data}
+gss_2012 <- gss %>%
+  filter(year == 2012, !is.na(getahead), !is.na(coninc)) %>%
+  mutate(per_income = ifelse((marital=='Married' & !is.na(wrkstat) & !is.na(spwrksta) & (wrkstat == 'Working Fulltime' | wrkstat == 'Working Parttime') & (spwrksta == 'Working Fulltime' | spwrksta == 'Working Parttime')), coninc / 2, coninc)) %>% # This line is to check if the income is coming from both husband and wife. If so, divide by 2 to get income per person.
+  select(getahead, per_income)
+
+gss_2012 %>%
+  str()
+
+ggplot(data=gss_2012, aes(x=per_income)) + 
+  geom_histogram(binwidth = 10000) + 
+  geom_vline(xintercept = median(gss_2012$per_income), colour = "blue") +
+  geom_text(aes(x=median(gss_2012$per_income), y=210, label=paste("Median: ",median(gss_2012$per_income))), hjust = -0.2, colour = "blue")
+```
+
+The sample contains 1156 rows and 2 variables. The income plot is extremely right skewed, with median at $28,725.   
+
+#### Second, factorize the income into 3 level, [low, medium, high]:
+Assumption for income classes:  
+
+- Middle class is the majority of the population -> Assign the middle 60% of the sample  
+- Upper class is the minority -> Assign the top 10% of the sample   
+- The rest is the low class -> Assign the bottom 30% of the sample  
+
+*Note:  the variable 'class' can't be used since Americans doesn't seem to classify their class by income. Some with low income but are happy with their financial situation can over-evaluate themself. On the other hand, people with high income can under-evaluate if them compare themself with other more successful milionairs.
+```{r class-by-income}
+gss %>%
+  filter(year == 2012, !is.na(getahead), !is.na(coninc)) %>%
+  mutate(per_income = ifelse((marital=='Married' & !is.na(wrkstat) & !is.na(spwrksta) & (wrkstat == 'Working Fulltime' | wrkstat == 'Working Parttime') & (spwrksta == 'Working Fulltime' | spwrksta == 'Working Parttime')), coninc / 2, coninc)) %>%
+  select(per_income) %>%
+  summarise(min = min(per_income), max = max(per_income), mean = mean(per_income), median = median(per_income), q1 = quantile(per_income, 0.3), q3 = quantile(per_income, 0.9), n = n())
+```
+According to the q1 and q3 result, income can be factorized as follow:  
+
+- low: less than or equal to $17,235  
+- high: equal to or more than $89,356  
+- medium: the rest  
+
+```{r factorize-income}
+gss_2012_fac <- gss_2012 %>%
+  mutate(income_level = ifelse(per_income <= 17235, "low", ifelse(per_income >= 89356, "high", "medium")))
+head(gss_2012_fac, n=5) # Show first 5 rows as examples
+```
+We now have the dataset needed for the analysis.  
+
+### 2. Exploratory analysis:  
+#### The first analysis will be on per_income calculated statistics for each mindset:  
+```{r stats-analysis}
+gss_2012_fac %>%
+  group_by(getahead) %>%
+  summarise(mean = mean(per_income), median = median(per_income), iqr = IQR(per_income), q1 = quantile(per_income, 0.25), q3 = quantile(per_income, 0.75))
+
+ggplot(data=gss_2012_fac, aes(x=getahead, y=per_income)) +
+  geom_boxplot()
+```
+
+Based on the result, 'Hard Work' and 'Luch Or Help' are almost the same. Only 'Both Equally' mindset has higher statistic results than the other two.
+
+#### The second analysis will be on income_level proportion in each mindset:  
+```{r prop-analysis}
+gss_2012_prop <- gss_2012_fac %>%
+  group_by(getahead, income_level) %>%
+  summarise(count = n()) %>%
+  mutate(proportion = count / sum(count))
+gss_2012_prop
+
+ggplot(data=gss_2012_prop, aes(x=getahead, y=proportion, fill=income_level)) +
+  geom_bar(position = "fill",stat = "identity")
+```
+
+The result is similar with the statistics analysis above. 'Hard Work' and 'Luch Or Help' mindset's proportion of high income are almost the same. Only 'Both Equally' mindset has higher proportion of high income than the other two.  
+
+### 3. EDA Conclusion:  
+By observing the result, there is a correlation, even though weak, between 'getahead' and 'income_level'.  
+This is a somewhat promising analysis result, which will allow us to go further and try to confirm the relationship between mindset and success. In the next section, by using statistical inference, we will test the independence between the two variables.   
+
+
+* * *
+
+## Part 4: Inference
+#### Preparing the data table for inference:  
+```{r prepare-inference-data}
+data_table <- table(gss_2012_fac$income_level, gss_2012_fac$getahead)[,1:3]
+data_table
+```
+
+
+### 1. Hypotheses:  
+- Null hypotheses $H_0$: 'getahead' and 'income_level' are independent. Success doesn't vary by mindset. 
+- Alternative hypotheses $H_A$: 'getahead' and 'income_level' are dependent. Success does vary by mindset. 
+
+### 2. Conditions:  
+- On Independence:  
+    - The respondents are chosen randomly.
+    - Number of respondents is 1156, which is less than 10% of the population.
+    - Each case contributes to only one cell in the table.
+  
+- On Sample size:  
+    - All cells have more than 5 expected cases.  
+  
+### 3. Method:  
+The purpose of this inference is to test the dependency between two categorise variables, all of which have more than 2 levels. So, the **Chi-square Independence test** will be used.  
+With Sample size condition met, **theoretical** will be used.  
+Significance level will be **5%**.  
+
+Since Chi-square test is the only method applicable, we won't consider the **confidence Interval**.  
+
+### 4. Perform inference:  
+In R, we can easily perform chi-square test of independence by using 'chisq.test' method:  
+```{r perform-inference}
+chisq.test(data_table)
+```
+
+### 5. Interpret result:  
+With p-value less than 0.05, we can reject the null hypotheses, and favor of the alternative.  
+We can conclude that **mindset and success are associated at the 5% significance level**.  
+
+
+***
+
+## Summary:  
+So there is a connection between a person's mindset and level of success. And it's not just an expiration quote from some mainstream self-help books, it's the analytical result from inferencing GSS data.  
+Furthermore, advices like *"Good things come to those who work hard"* or *"It's not what you know. It's who you know"* are not entirely empty. They doesn't work sometimes because they are incomplete. People, who value both **hard work** and **help / luck** equally, are more likely to have high income than people who tend to believe in only one.  
+But due to the nature of this analysis, we can't conclude that having the right mindset will cause people to have high income. Another kind of dataset which come from experimental studies is more suitable for extracting causality.
