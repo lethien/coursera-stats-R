@@ -1,0 +1,409 @@
+---
+title: "Modeling and prediction for movies"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(statsr)
+```
+
+### Load data
+
+```{r load-data}
+load("movies.Rdata")
+```
+
+
+
+* * *
+
+## Part 1: Data
+The dataset "movies" contains 651 movies produced and released before 2016.
+32 variables are included to present a movie's information.
+
+### On Generabizability:  
+All movies are randomly sampled. So the result of this analysis can be generalized to draw conclusions for other movies.  
+
+One possible source of bias is from the period of time which the movies is produced, from 1970 to 2014. 40 years can easily fit 3 generations in it. And we can expect the taste of the audience can change really fast. So the vote and rating might favor latter movies than the ones in the 70s.
+
+### On Causality:  
+The sample is the product of observing randomly chosen movies. There is no random assignment. Therefor, no causality can be concluded from analysing this dataset.
+
+
+* * *
+
+## Part 2: Research question
+Paramount Pictures Corporation (or Paramount for short) is one the Major Film studio in America. Established from 1916, Paramount is the fifth oldest surviving film studio in the world, the second oldest in America. Some iconic movies produced by Paramount are Titanic (1997), Forrest Gump (1994) and Shrek the Animation series.  
+
+In order to survive in the competitive film industry, a studio need to produce as many high-grossing movies as it can. While on the other hand, minimize failures by terminating them before investing so much money.  
+To address this matter, we will try to produce a predicting model that is capable of answering this question:  
+**Is it possible to predict a movie's financial success based on limited information at the early stages of the production?**  
+
+Usually, a movie's financial success is based on it's gross. But we don't have that information in our dataset.  
+Instead, we will use the number of votes (imdb_num_votes) as the response variable.  
+Our assumption is that: 
+
+- The number of votes is correlated with the movie's populatiry. High number of votes means lots of people that have watched the movie and cared enough to leave a review on IMDB. 
+- The movie's popularity is correlated with the movies's financial success. Lots of viewers means lots of people have paid money to watched it.
+
+
+* * *
+
+## Part 3: Exploratory data analysis
+### 1. Check if number of votes can be used as the response variable
+Before we begin to do any analysis, let's check if our assumption in the previous section on the response variable is correct.
+We will get the top and bottom 5 movies, then manually search in IMDB.com for their gross and budget.
+
+First, the top 5 movies with the most number of votes:
+```{r top-5-movies}
+movies %>%
+  select(title, thtr_rel_year, imdb_num_votes) %>%
+  arrange(desc(imdb_num_votes)) %>%
+  head(5)
+```
+And here are their gross:  
+```{r table-top-gross, echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+table_top <- "
+| title             | thtr_rel_year | imdb_num_votes  | gross           | estimated budget  |
+|-------------------|:-------------:|----------------:|----------------:|------------------:|
+| Django Unchained	| 2012	        | 893008          | $425,368,238	  | $100,000,000      |
+| Memento	          | 2000	        | 806911	        | $39,723,096     | $9,000,000        |
+| The Prestige      |	2006          |	797101	        | $109,676,311    | $40,000,000       |
+| Titanic           |	1997          |	756602	        | $2,186,772,302  | $200,000,000      |
+| V for Vendetta    |	2006          |	753592	        | $132,511,035    | $54,000,000       |
+"
+cat(table_top)
+```
+
+Then, the bottom 5:
+```{r bottom-5-movies}
+movies %>%
+  select(title, thtr_rel_year, imdb_num_votes) %>%
+  arrange(imdb_num_votes) %>%
+  head(5)
+```
+And their gross:
+```{r table-bottom-gross, echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+table_bottom <- "
+| title                           | thtr_rel_year | imdb_num_votes  | gross           | estimated budget  |
+|---------------------------------|:-------------:|----------------:|----------------:|------------------:|
+| Saint of 9/11   	              | 2006	        | 180             | $4,901      	  | $400,000          |
+| Mojados: Through the Night	    | 2004	        | 183	            | NA              | NA                |
+| In Search of Beethoven          |	2009          |	281	            | NA              | NA                |
+| Gaza Strip                      |	2002          |	285	            | NA              | NA                |
+| Phil Ochs: There But For Fortune|	2011          |	318	            | $259,362        | NA                |
+"
+cat(table_bottom)
+```
+
+This result comfirms our assumption, number of votes is correlated with popularity, and popularity is correlated with financial success. Top number of votes movies all have positive net revenue. The opposite for the bottom ones.  
+
+Although number of votes isn't exactly "linearly associated" with a movie's financial success, but we can definitely use it as the response variable.  
+
+### 2. Explore the distribution of response variable:
+```{r num-votes-hist}
+summary(movies$imdb_num_votes)
+
+ggplot(data=movies, aes(x=imdb_num_votes)) +
+  geom_histogram(binwidth = 50000) +
+  labs(title="IMDB Number of Votes distribution", x="IMDB Number of Votes (binwidth = 50000)", y="Count")
+```
+
+The distribution of imdb_num_votes is extremely right skewed. Most of the movies seems to have a really small audience, while some others get all the attention.  
+This skewness is expected. Do you know that there were 736 movies released in North America in 2016, and 724 in 2017? Now try to remember how many did you watch?  
+
+But this extremely skewed distribution can be a problem when we try to fit our regression model. One solution for this kind of problem is to perform a log transform on the number of votes.  
+Also, to address the concern about bias stated in Part 1, we will only consider movies from 1990 onward.
+
+```{r log-transform}
+movies <- movies %>%
+  filter(thtr_rel_year >= 1990) %>%
+  mutate(log_num_votes = log(imdb_num_votes))
+
+summary(movies$log_num_votes)
+
+ggplot(data=movies, aes(x=log_num_votes)) +
+  geom_histogram(binwidth = 0.25) +
+  labs(title="IMDB Number of Votes distribution after transformation", x="Log IMDB Number of Votes", y="Count")
+```
+
+The skewness has reduced. The mean and median are now close to each other.  
+Now we can used the transformed 'imdb_num_votes' as the response variable for our model.  
+
+
+* * *
+
+## Part 4: Modeling
+### 1. Choose suitable explanatory variables: 
+We are looking for variables that meet these conditions:
+
+- Suitable for linear regression model: type of categorical, numerical discrete or numerical continuous.
+- Likely to be available at the early stages of the production.
+
+#### Removing unsuitable variables
+First, we can see some variables with type of character: **title, director, actor1 to actor5, imdb_url, rt_url**. We will not consider these variables in our model as they are not suitable to be explanatory variables in a linear regression model.  
+
+Second, the **studio** has too many levels for a categorical variable (212 distinct studios). So we will treat it as a character type variable and thus, we will not consider in our model.
+
+Thrid, some variables won't be available at the early stages of the production: **imdb_rating, critics_rating, critics_score, audience_rating, audience_score, best_pic_nom, best_pic_win, top200_box**. We will not consider these variables as well.
+
+Fourth, we won't consider **dvd_rel_year, dvd_rel_month, dvd_rel_day**. A movie is always released in the theaters first. The decision to release the movie in DVD format won't be made until the studio checked how well the audience responsed to the movie, usually months after the theater release date.
+
+#### Filling NA values
+There are missing values in the runtime variable.
+```{r na-values}
+movies %>%
+  select(title, title_type, studio, thtr_rel_year, runtime, imdb_num_votes) %>%
+  filter(is.na(runtime))
+```
+Luckily, the number of missing values is small. We can try to fill the missing values: The movie "End of America" runtime is 74 min.
+```{r fill-missing-runtime}
+movies <- movies %>%
+  mutate(runtime = ifelse(is.na(runtime), 74, runtime))
+```
+
+#### Shifting thtr_rel_year values
+In 3 discrete explanatory variables, thtr_rel_year (1990 to 2014) has values on a different scale compared to thtr_rel_day (1 to 31) and thtr_rel_month (1 to 12).  
+With such large values, thtr_rel_year can have more effect on the response variable than it should be. In order to avoid that we will shift it values to the scale of the other two.
+```{r shifting-year}
+movies <- movies %>%
+  mutate(thtr_rel_year_shf = thtr_rel_year - 1990) # thtr_rel_year values will be shifted to 0-24
+```
+
+#### Finally, we have a minimized dataset with 11 variables:  
+
+- 1 response variable: **log_num_votes**
+- 6 categorical explanatory variables: **title_type, genre, mpaa_rating, best_actor_win, best_actress_win, best_dir_win**.
+- 1 continuous explanatory variable: **runtime**
+- 3 discrete explanatory variables: **thtr_rel_year_shf, thtr_rel_month, thtr_rel_day**
+
+```{r movies-minimizeed}
+movies_miniset <- movies %>%
+  select(title_type, genre, runtime, mpaa_rating, thtr_rel_year_shf, thtr_rel_month, thtr_rel_day, best_actor_win, best_actress_win, best_dir_win, log_num_votes)
+```
+
+### 2. Contructing model
+#### Model selection:
+Selection method is Backwards elimination using Adjusted R squared.  
+Reasoning for choice selection method:
+
+- Backwards elimination and Forward selection are expected to produce the same model. So it's just a matter of personal preference.  
+- Adjusted R squared is used as the criteria because we are targeting a reliable predicting model.
+
+Since the selection process is long, we will only show the result of steps, and won't show the accompanied code.  
+'======>' indicates the step's results, including the to be removed variable and the new Adjust R squared.
+```{r model-selection-steps, echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+table_selection_steps <- "
+| Step    | Removed             | Adjusted R squared  |
+|---------|---------------------|--------------------:|
+| Full    |                     | 0.4436              |
+|---------|---------------------|---------------------|
+| Step 1  |                     |                     |
+|         | [-title_type]       | 0.4270              |
+|         | [-genre]            | 0.4214              |
+|         | [-runtime]          | 0.3779              |
+|         | [-mpaa_rating]      | 0.4195              |
+|         | [-thtr_rel_year_shf]| 0.3723              |
+|         | [-thtr_rel_month]   | 0.4440              |
+|         | [-thtr_rel_day]     | 0.4403              |
+|         | [-best_actor_win]   | 0.4429              |
+| ======> | [-best_actress_win] | 0.4447              |
+|         | [-best_dir_win]     | 0.4389              |
+|---------|---------------------|---------------------|
+| Step 2  |                     |                     |
+|         | [-title_type]       | 0.4281              |
+|         | [-genre]            | 0.4225              |
+|         | [-runtime]          | 0.3767              |
+|         | [-mpaa_rating]      | 0.4205              |
+|         | [-thtr_rel_year_shf]| 0.3736              |
+| ======> | [-thtr_rel_month]   | 0.4450              |
+|         | [-thtr_rel_day]     | 0.4413              |
+|         | [-best_actor_win]   | 0.4440              |
+|         | [-best_dir_win]     | 0.4398              |
+|---------|---------------------|---------------------|
+| Step 3  |                     |                     |
+|         | [-title_type]       | 0.4285              |
+|         | [-genre]            | 0.4233              |
+|         | [-runtime]          | 0.3714              |
+|         | [-mpaa_rating]      | 0.4207              |
+|         | [-thtr_rel_year_shf]| 0.3741              |
+|         | [-thtr_rel_day]     | 0.4416              |
+|         | [-best_actor_win]   | 0.4442              |
+|         | [-best_dir_win]     | 0.4399              |
+"
+cat(table_selection_steps)
+```
+
+At the end, we will get a model with 8 explanatory variables: **title_type, genre, runtime, mpaa_rating, thtr_rel_year_shf, thtr_rel_day, best_actor_win, best_dir_win**
+```{r final-model}
+lm <- lm(data = movies_miniset, log_num_votes ~ title_type + genre + runtime + mpaa_rating + thtr_rel_year_shf + thtr_rel_day + best_actor_win + best_dir_win)
+```
+
+#### Model diagnostics:
+There are 4 conditions that the model has to meet:  
+**Condition 1: Linear relationships between numerical explanatory variables with the response variable.**  
+Numerical explanatory variables in our model are: runtime, thtr_rel_year_shf, thtr_rel_day.  
+Check this linear condition by using residuals plots.
+```{r linear-num-x}
+par(mfcol=c(1,3))
+
+plot(lm$residuals ~ movies_miniset$runtime, main="residuals vs. runtime")
+abline(h=0, col = "blue")
+
+plot(lm$residuals ~ movies_miniset$thtr_rel_year_shf, main="residuals vs. thtr_rel_year_shf")
+abline(h=0, col = "blue")
+
+plot(lm$residuals ~ movies_miniset$thtr_rel_day, main="residuals vs. thtr_rel_day")
+abline(h=0, col = "blue")
+```
+
+The plots show random scatter around 0. The linear relationships condition is met.
+
+**Condition 2: Nearly normal residuals with mean 0.**  
+Check using histogram and normal probability plot of residuals.  
+```{r normal-residuals}
+par(mfrow=c(1,2))
+
+hist(lm$residuals, main="Histogram of lm$residuals")
+
+qqnorm(lm$residuals, main="residuals normal probability plot")
+qqline(lm$residuals)
+```
+
+The residuals distribution is nearly normal with mean 0. The nearly normal residuals condition is satisfied.    
+
+**Condition 3: Constant variability of residuals**  
+Check using residuals plot of residuals vs predicted.  
+```{r const-vari}
+par(mfrow=c(1,2))
+
+plot(lm$residuals ~ lm$fitted, main="residuals vs. fitted")
+abline(h=0, col="blue")
+
+plot(abs(lm$residuals) ~ lm$fitted, main="absolute residuals vs. fitted")
+abline(h=0, col="blue")
+```
+
+The plots show random scatter around 0, with no fan shape. The residuals variability condition is met.  
+
+**Condition 4: Independent residuals**  
+Independent residuals mean independent observations. Check by using plot of residuals vs order of data collection.  
+```{r independent-res}
+plot(lm$residuals, main="residuals in order of data collected")
+abline(h=0, col="blue")
+```
+
+There is no sight of time series structure, the plot shows no pattern. The independent residuals condition is also met.  
+
+**And by satisfying all 4 conditions, our multiple linear regression model is a valid one.**  
+
+### 3. Interpretation of model
+```{r interp-lm}
+summary(lm)
+```
+
+**Inference for the model as a whole**  
+Looking at the F-statistic result: *19.94 on 21 and 475 DF,  p-value: < 2.2e-16*  
+p-value is less than 0.05, we can conclude that the model is significant.
+
+**Inference for slopes**  
+Based on the p-value of each explanatory variable (check if it is less than 0.05), there are:  
+
+- 7 significant variables: title_type, genre, runtime, mpaa_rating, thtr_rel_year_shf, thtr_rel_day, best_dir_win  
+- 1 insignificant variables: best_actor_win (p-value=0.238 > 0.05)  
+
+Even though that variable is statistically insignificant to the response variable, we will still keep our model as of now. Removing 'best_actor_win' will reduce the adjusted R squared score. And we want our model to be reliable as much as possible.    
+
+Calculate the 95% confidence interval of all the slopes:  
+```{r slope-ci}
+confint.mlm <- function (object, level = 0.95) {
+  cf <- coef(object)
+  ncfs <- as.numeric(cf)
+  a <- (1 - level)/2
+  a <- c(a, 1 - a)
+  fac <- qt(a, object$df.residual)
+  pct <- stats:::format.perc(a, 3)
+  ses <- sqrt(diag(vcov(object)))
+  ci <- ncfs + ses %o% fac
+  setNames(data.frame(ci),pct)
+}
+confint(lm)
+```
+
+For the slope of title_type, we are 95% confident that, all else being equal, the model predicts that movies whose title type is:  
+
+- 'Feature Film' have 0.88 to 2.86 more log(number_of_votes) than 'Documentary' movies.  
+- 'TV Movie' have 0.60 less to 2.41 more log(number_of_votes) than 'Documentary' movies.  
+
+We can interpret similarly for other categorical variables: genre, mpaa_rating, best_actor_win, best_dir_win.  
+
+For the slope of runtime, we are 95% confident that, all else being equal, the model predicts that with 1 minute increase of runtime, the log(number_of_votes) increases by 0.022 to 0.037.  
+
+We can interpret similarly for other numerical variables: thtr_rel_year_shf, thtr_rel_day.
+
+
+* * *
+
+## Part 5: Prediction  
+To test our model, we will perform prediction on a massively success movie in 2016, Deadpool ([imdb.com](https://www.imdb.com/title/tt1431045/)).  
+
+```{r deadpool-info}
+deadpool <- data.frame(
+  title_type = "Feature Film",
+  genre = "Action & Adventure", 
+  runtime = 108, 
+  mpaa_rating = "R", 
+  thtr_rel_year_shf = 26, # 2016 - 1990
+  thtr_rel_day = 12, 
+  best_actor_win = "no", 
+  best_actress_win = "no", 
+  best_dir_win = "no"
+)
+```
+
+```{r deadpool-predict}
+predict(lm, deadpool, interval = "prediction", level = 0.95)
+```
+With 95% confidence, the model predicts that Deadpool is expected to have *log-transformed number of votes* from 9.09 to 14.18.  
+
+In reality, the number of votes for Deadpool on IMDB is 777,540. Rescale the number to fit our model by using log transformation gives the result of:    
+```{r rescale-num-votes}
+log(777540)
+```
+Which is within the range of the predicted confidence interval.  
+
+Put this result in the context of the movies data set.  
+```{r num-votes_quantile}
+quantile(movies_miniset$log_num_votes)
+```
+Deadpool's pupolarity is expected to be better than:  
+
+- 31% of the movies in the sample in the worst case.
+- 84% of the movies in the sample in normal case.
+- 100% of the movies in the sample in the best case.
+
+Seems like a potential blockbuster. And it was. With the budget of \$58,000,000, Deadpool made \$783,112,979 worldwide.  
+
+
+* * *
+
+## Part 6: Conclusion
+So it is possible to build a prediction model for movie's financial success based on the information we have in the early stages of production.  
+
+Built upon the provided movies data set, the model's prediction is fairly accurate at 95% confidence. But it isn't precise.  
+
+Shortcomings and possible improvements:  
+
+- The author lacks insider's knowledge about the film industry. So the choice of explanatory might not correct. Can be improved by having input from experts.  
+- There is no data on the real research target, and have to use a subtitution. It's will be much better if financial data is available such as budget, gross, net, etc.  
+- The model accuracy at 95% condidence is fairly good. But the precision is still low. Can be improved by having more meaningful variables, such as history records of writer, director and actor/actress.
