@@ -1,0 +1,226 @@
+## Setup
+```{r setup, include=FALSE}
+options(width=100)
+options(digits = 4)
+```
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(statsr)
+library(BAS)
+library(MASS)
+library(broom)
+library(tidyverse)
+```
+
+### Load data
+
+```{r load-data}
+load("movies.Rdata")
+```
+
+
+* * *
+
+## Part 1: Data
+The dataset "movies" contains 651 movies produced and released before 2016.
+32 variables are included to present a movie's information.
+
+### On Generabizability:  
+All movies are randomly sampled. So the result of this analysis can be generalized to draw conclusions for other movies.  
+
+One possible source of bias is from the period of time which the movies is produced, from 1970 to 2014. 40 years can easily fit 3 generations in it. And we can expect the taste of the audience can change really fast. So the vote and rating might favor latter movies than the ones in the 70s.
+
+### On Causality:  
+The sample is the product of observing randomly chosen movies. There is no random assignment. Therefor, no causality can be concluded from analysing this dataset.
+
+* * *
+
+## Part 2: Data manipulation
+We need a editted dataset which contains the following variables:  
+
+- **feature_film**: "yes" if title_type is Feature Film, "no" otherwise
+- **drama**: "yes" if genre is Drama, "no" otherwise
+- runtime: Runtime of movie (in minutes)
+- **mpaa_rating_R**: "yes" if mpaa_rating is R, "no" otherwise
+- thtr_rel_year: Year the movie is released in theaters
+- **oscar_season**: "yes" if movie is released in November, October, or December (based on thtr_rel_month), "no" otherwise
+- **summer_season**: "yes" if movie is released in May, June, July, or August (based on thtr_rel_month), "no" otherwise
+- imdb_rating: Rating on IMDB
+- imdb_num_votes: Number of votes on IMDB
+- critics_score: Critics score on Rotten Tomatoes
+- best_pic_nom: Whether or not the movie was nominated for a best picture Oscar (no, yes)
+- best_pic_win: Whether or not the movie won a best picture Oscar (no, yes)
+- best_actor_win: Whether or not one of the main actors in the movie ever won an Oscar (no, yes) -- note that this is not necessarily whether the actor won an Oscar for their role in the given movie
+- best_actress_win: Whether or not one of the main actresses in the movie ever won an Oscar (no, yes) -- note that this is not necessarily whether the actresses won an Oscar for their role in the given movie
+- best_dir_win: Whether or not the director of the movie ever won an Oscar (no, yes) -- note that this is not necessarily whether the director won an Oscar for the given movie
+- top200_box: Whether or not the movie is in the Top 200 Box Office list on BoxOfficeMojo (no, yes)
+- audience_score: Audience score on Rotten Tomatoes (The response variable)
+
+The ones in **bold** are new variables which will construct base on other variables in the original dataset.  
+And the others will be just copied from the original.  
+
+```{r data-manipulate}
+movies_edited <- movies %>%
+  mutate(feature_film = factor(ifelse(title_type == 'Feature Film', 'yes', 'no'))) %>%
+  mutate(drama = factor(ifelse(genre == 'Drama', 'yes', 'no'))) %>%
+  mutate(mpaa_rating_R = factor(ifelse(mpaa_rating == 'R', 'yes', 'no'))) %>%
+  mutate(oscar_season = factor(ifelse(thtr_rel_month %in% c(10, 11, 12), 'yes', 'no'))) %>%
+  mutate(summer_season = factor(ifelse(thtr_rel_month %in% c(5, 6, 7, 8), 'yes', 'no'))) %>%
+  dplyr::select(feature_film, drama, runtime, mpaa_rating_R, thtr_rel_year, oscar_season, summer_season,
+                imdb_rating, imdb_num_votes, critics_score, best_pic_nom, best_pic_win, best_actor_win,
+                best_actress_win, best_dir_win, top200_box, audience_score)
+
+summary(movies_edited)
+```
+
+With this dataset, we finish our Data Manipulation part. And we are ready to use this dataset for the next part, EDA.
+
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+### 1. Explore the response variable _audience_score_:  
+```{r explore-audience-score}
+summary(movies_edited$audience_score)
+
+ggplot(data = movies_edited, aes(x = audience_score)) +
+  geom_histogram(binwidth = 5) +
+  labs(x = 'Rotten Tomatoes users\' score', y= 'Count')
+```
+
+The distribution of audience_score is slightly left-skewed. With mean and median are 62.36 and 65 respectively.  
+Since the skewness is not severe, no transformation is needed for audience_score.  
+
+### 2. Explore the relationship between _audience_score_ and one of the newly created variable _drama_:  
+Drama is no doubt a popular genre. In this dataset, the percentage of drama genre film is nearly 47%. Well, no one want to watch a boring, monotone movie anyway.  
+It seems that _drama_ can be a good predictor for _audience_score_. Let's see how is the correlation between _drama_ and _audience_score_.  
+
+```{r score-vs-drama}
+summary(lm(audience_score ~ drama, data = movies_edited))
+
+ggplot(data = movies_edited, aes(x = audience_score, y = drama)) +
+  geom_point(alpha = 0.6) +
+  stat_smooth(method = 'lm', se = FALSE)
+```
+
+We can say that _drama_ is a statistical significant explanatory variable. And there is a positive correlation relationship between _drama_ and _audience_score_.  
+But with such a tiny R squared score, we can't use this simple model to predict _audience_score_.  
+
+We will need something more complicated. In the next part, we will build a multivariate Bayesian regression model, which will consider all the explanatory variables in the dataset.
+
+* * *
+
+## Part 4: Modeling
+
+### 1. Model selection:  
+#### First, let's implement Bayesian model averaging:  
+```{r bma-model}
+bma_model <- bas.lm(audience_score ~ ., data = na.omit(movies_edited),
+                    prior = "ZS-null", modelprior = uniform())
+summary(bma_model)
+```
+The posterior model inclusion probability for some variables are very small, like _feature_film_ or _best_pic_win_.  
+Clearly including all variables is not the best model.  
+
+#### Second, choosing the best model:  
+Since our goal is to use the model to predict _audience_score_, the best model will be *Best Predictive Model*
+```{r best-model}
+best_model <- predict(bma_model, estimator = 'BPM', se.fit = TRUE)
+variable.names(best_model)
+```
+
+#### Finally, we have our model:  
+```{r bpm-model}
+bpm_model <- bas.lm(audience_score ~ runtime + imdb_rating + critics_score, data = na.omit(movies_edited),
+                    prior = 'ZS-null', modelprior = uniform())
+```
+The model consist of 3 explanatory variables:
+
+- runtime
+- imdb_rating
+- critics_score
+
+### 2. Model diagnostics:  
+```{r bpm-model-summary}
+summary(bpm_model)
+```
+Now, the posterior model inclusion probability of all variables are large (The smallest is _runtime_ with P > 0.47).  
+The top 2 model stand out from the rest with posterior probability of 0.47 and 0.41 respectively. Furthermore, their R2 score is high (> 0.75), indicate that the model fit nicely with the data.  
+
+We can plot the posterior distribution of the coefficients under the model averaging approach:  
+```{r model-coef-visualization}
+bpm_model_coef <- coef(bpm_model)
+
+par(mfrow = c(2, 2), col.lab = "darkgrey", col.axis = "darkgrey", col = "darkgrey")
+plot(bpm_model_coef, subset = 2:4, ask = FALSE)
+```
+
+These distributions all center at their respetive OLS estimates, with the spread of the distribution related to the standard errors.
+
+### 3. Interpretation of model coefficients:  
+95% credible interval of the coefficients:  
+```{r model-coef-ci}
+out = confint(bpm_model_coef)[, 1:2]  
+
+# Extract the upper and lower bounds of the credible intervals
+names = c("posterior mean", "posterior std", colnames(out))
+out = cbind(bpm_model_coef$postmean, bpm_model_coef$postsd, out)
+colnames(out) = names
+
+round(out, 2)
+```
+
+Based on the 95% credible interval of all the coefficients, we can believe that there is a 95% change that _audience_score_ will
+
+- decrease by 0.08 to 0.00 with one additional minute increase in runtime.
+- increase by 13.68 to 16.58 with one additional point increase in imdb_score.
+- increase by 0.00 to 0.11 with one additional point increase in critics_score.
+
+* * *
+
+## Part 5: Prediction
+### 1. Choose the movie:
+One of most popular film in 2016: [La la land](https://www.imdb.com/title/tt3783958/)  
+
+- runtime: 128
+- imdb_rating: 8
+- critics_score: 91
+
+```{r new-movie}
+new_movie <- data.frame(
+  runtime = 128,
+  imdb_rating = 8,
+  critics_score = 91
+)
+```
+
+And _audience_score_: 81 ([Rotten Tomatoes](https://www.rottentomatoes.com/m/la_la_land)).  
+Let's see how well our model perform on this new data.
+
+### 2. Predict the _audience_score_:
+```{r new-movie-predict}
+new_movie_pred <- predict(bpm_model, newdata = new_movie, estimator = 'BMA', se.fit = TRUE)
+confint(new_movie_pred)
+```
+We can see that the model perform pretty well.  
+The _audience_score_ of 81 is within the 95% credible interval which is from 67.42 to 100.  
+And the prediction result of 86.47 is close to the real score, the error is just 5.47 point.  
+
+* * *
+
+## Part 6: Conclusion
+With such positive result, we can say that we successfully built a multivariate Bayesian regression model that can predict the _audience_score_ of a movie.  
+We also learn that _runtime_, _imdb_rating_ and _critics_score_ hold most influence on _audience_score_. So the model built with those 3 variables can produce a pretty accurate prediction.  
+
+One shortcoming is the practical aspect of the model in predicting _audience_score_.  
+_imdb_rating_ and _critics_score_ are only available after the movie has been released. In other word, _audience_score_ will be already available on Rotten Tomatoes when we have those data.  
+
+Possible improvements:  
+
+- Reconfirm with management on the purpose of the model, how and when will it be used.
+- Based on the purpose, reduce the impractical variables, and collect more potential predictors.
