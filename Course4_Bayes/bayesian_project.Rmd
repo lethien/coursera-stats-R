@@ -103,9 +103,8 @@ It seems that _drama_ can be a good predictor for _audience_score_. Let's see ho
 ```{r score-vs-drama}
 summary(lm(audience_score ~ drama, data = movies_edited))
 
-ggplot(data = movies_edited, aes(x = audience_score, y = drama)) +
-  geom_point(alpha = 0.6) +
-  stat_smooth(method = 'lm', se = FALSE)
+ggplot(data = movies_edited, aes(x = drama, y = audience_score)) +
+  geom_boxplot()
 ```
 
 We can say that _drama_ is a statistical significant explanatory variable. And there is a positive correlation relationship between _drama_ and _audience_score_.  
