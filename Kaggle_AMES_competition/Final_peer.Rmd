@@ -1,0 +1,262 @@
+```{r setup, include=FALSE}
+options(width=100)
+options(digits = 4)
+set.seed(12345)
+```
+
+---
+title: "Kaggle Competition - AMES House price prediction"
+output:
+  html_document: 
+    pandoc_args: [
+      "--number-sections",
+    ]
+---
+
+# Background
+
+Ask a home buyer to describe their dream house, and they probably won't begin with the height of the basement ceiling or the proximity to an east-west railroad. But this playground competition's dataset proves that much more influences price negotiations than the number of bedrooms or a white-picket fence.
+
+With 79 explanatory variables describing (almost) every aspect of residential homes in Ames, Iowa, this competition challenges you to predict the final price of each home.
+
+# Data and Packages
+
+```{r load, message = FALSE}
+ames_train <- read.csv("train.csv", header = TRUE, sep = ",")
+```
+
+Use the code block below to load any necessary packages
+
+```{r packages, message = FALSE}
+library(statsr)
+library(dplyr)
+library(MASS)
+library(ggplot2)
+```
+
+## Part 1 - Exploratory Data Analysis (EDA)
+
+Exploring the ames data set
+
+```{r}
+str(ames_train)
+```
+
+* * *
+
+Exploring the dependant variable - Price  
+
+```{r price-distribution}
+plot_price <- ggplot(ames_train, aes(x=SalePrice)) +
+  geom_histogram(bins = 30, fill = "green", colour = "black") +
+  labs(title = "Price Distribution Histogram", x = "Price", y = "Count") +
+  geom_vline(xintercept = median(ames_train$SalePrice), linetype="dashed", size=1.5) +
+  geom_text(x=median(ames_train$SalePrice) + 150000, y=150, label=paste("Median: ", median(ames_train$SalePrice)))
+
+plot_log_price <- ggplot(ames_train, aes(log(SalePrice))) +
+  geom_histogram(bins = 30, fill = "green", colour = "black") +
+  labs(title = "Log Price Distribution Histogram", x = "Log of Price", y = "Count") +
+  geom_vline(xintercept = median(log(ames_train$SalePrice)), linetype="dashed", size=1.5) +
+  geom_text(x=median(log(ames_train$SalePrice)) + 0.75, y=150, label=paste("Median: ", round(median(log(ames_train$SalePrice)), 2)))
+
+gridExtra::grid.arrange(plot_price, plot_log_price, ncol = 2)
+```
+
+On the first graph:  
+
+- The distribution is right-skewed and unimodal.  
+- 50% of the houses were sold for \$163,000 or less. There are some properties that were sold for more than \$600,000.  
+- With the skewness and some potential outliers, it may not be suitable for a regression model. To resolve the skewness, log of price will be used instead.  
+
+On the second graph:  
+
+- The skewness is gone. And the distribution is still unimodal.  
+- There are still some outliers. Maybe some houses were sold under-priced.  
+
+* * *
+
+## Part 2 - Development and assessment of the model
+
+### Section 2.1 An Initial Model
+
+**On predictors selection:**  
+Since I don't have any experience in Real Estate business, base knowledge will be from experts from the field (real estate websites).  
+A house's value is often based on the following attributes:  
+
+- Location (Neighborhood, Type of Dwelling)  
+- Size (of the Lot, Basement, Garage, etc.)  
+- Interior (number of Bedrooms, Bathrooms, etc.)  
+- Condition (Age, Quality, Condition)  
+- Other amenities (Pool, Fireplace, etc.)
+
+All variables that have connection to those attributes will be put into the model.  
+After building a model with those variables and observing the result, it's optional to add, remove or transform some variables. Repeat this step until satisfy. 
+
+```{r prepare-data}
+prepare_data_func <- function(data) {
+  data_changed <- data %>%
+    mutate(AgeSold = YrSold - YearRemodAdd) %>%
+    mutate(FullBaths = BsmtFullBath +  FullBath) %>%
+    mutate(BathBedRatio = ifelse(FullBaths == 0 | BedroomAbvGr == 0, 0, FullBaths / BedroomAbvGr)) %>%
+    mutate(PorchSF = WoodDeckSF + OpenPorchSF + EnclosedPorch, X3SsnPorch, ScreenPorch)
+    
+    return(data_changed)
+}
+
+build_model <- function(data) {
+  model <- lm(LogPrice ~ GrLivArea + LotArea + TotalBsmtSF + GarageArea + 
+                      OverallQual + OverallCond + AgeSold +
+                      Neighborhood + BldgType + LotShape + MSZoning + 
+                      LandContour + LandSlope + 
+                      BathBedRatio + BedroomAbvGr + KitchenAbvGr + 
+                      Fireplaces + PoolArea + PorchSF + 
+                      SaleCondition + YearBuilt, 
+                    data = data)
+}
+
+ames_train_all <- prepare_data_func(ames_train)
+ames_train_all <- ames_train_all  %>%
+    mutate(LogPrice = log(SalePrice))
+
+sample <- sample.int(n = nrow(ames_train_all), size = floor(.75*nrow(ames_train_all)), replace = F)
+ames_train_edited <- ames_train_all[sample, ]
+ames_test_edited  <- ames_train_all[-sample, ]
+```
+
+```{r fit_model}
+m_initial <- build_model(ames_train_edited)
+```
+
+
+```{r summary-of-init-model}
+summary(m_initial)
+```
+
+All the variables are significant predictors.  
+And the model performs fairly well with the R2 score more than 0.8.  
+
+* * *
+
+### Section 2.2 Model Selection
+
+```{r model_select}
+aic_model <- stepAIC(m_initial, direction = "backward")
+```
+
+```{r model_aic}
+aic_model_pred <- predict(aic_model)
+```
+
+* * *
+
+### Section 2.3 Model Residuals
+
+```{r model_resid}
+plot_resid_data <- as.data.frame(
+  cbind(
+    id = ames_train_edited$Id, 
+    sc = ames_train_edited$SaleCondition, 
+    pred = aic_model_pred, 
+    resid = ames_train_edited$LogPrice - aic_model_pred
+    )
+  )
+
+ggplot(plot_resid_data, aes(pred, resid)) +
+  geom_point(colour = "blue", shape = 1) +
+  labs(title = "BMA Model residual plot", x = "Predicted Log price", y = "Residuals") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_text(aes(label=ifelse(abs(resid)>0.5,paste("ID: ",id, ", SaleCond: ", sc),'')),hjust=-0.1,vjust=0) +
+  xlim(10.5, 15)
+```
+
+There is no pattern in the scatter plot, no fan shape found. Residuals lie randomly around the hline (y = 0).  
+Most of the residuals is closed to 0. Except for some potential outliers. And we can see most of them have sale condition not normal.   
+
+* * *
+
+### Section 2.4 Model RMSE
+
+```{r model_rmse}
+print(paste("RMSE on train data: ", sqrt(mean((exp(aic_model_pred) - ames_train_edited$SalePrice)^2))))
+```
+
+* * *
+
+### Section 2.5 Test for Overfitting 
+
+Steps:  
+
+- Generate prediction for the test dataset, using the initial model  
+- Calculate the RMSE score and compare with the score of aic_model  
+
+```{r initmodel_test}
+aic_test_pred <- predict(aic_model, newdata = ames_test_edited)
+print(paste("RMSE on test data: ", sqrt(mean((exp(aic_test_pred) - ames_test_edited$SalePrice)^2))))
+
+outlier_ignore_test_pred <- exp(predict(aic_model, newdata = ames_test_edited, interval = "prediction"))
+print(paste("Coverage Probability on test data: ", mean(ames_test_edited$SalePrice > outlier_ignore_test_pred[,"lwr"] & ames_test_edited$SalePrice < outlier_ignore_test_pred[,"upr"])))
+```
+
+The RMSE scores aren't differ much to the score on train data.  
+Our model isn't overfitted.  
+
+* * *
+
+## Part 3 Output the result
+
+### Section 3.1 Prepare data set
+
+```{r load-test, message = FALSE}
+ames_test <- read.csv("test.csv", header = TRUE, sep = ",")
+```
+
+* * *
+
+```{r data-test}
+ames_test <- ames_test %>%
+  mutate(TotalBsmtSF = ifelse(is.na(TotalBsmtSF), 0, TotalBsmtSF)) %>%
+  mutate(BsmtFullBath = ifelse(is.na(BsmtFullBath), 0, BsmtFullBath)) %>%
+  mutate(GarageArea = ifelse(is.na(GarageArea), 0, GarageArea)) %>%
+  mutate(MSZoning = factor(ifelse(is.na(MSZoning), paste("C (all)"), paste(MSZoning))))
+
+ames_test <- prepare_data_func(ames_test)
+```
+
+* * *
+
+### Section 3.2 Perform prediction  
+
+```{r prediction-test}
+ames_test_pred <- predict(aic_model, newdata = ames_test)
+```
+
+* * *
+
+### Section 3.3 Output prediction to file  
+
+```{r output-file}
+output_data <- cbind(ames_test, SalePrice = exp(ames_test_pred))
+output_data <- output_data %>%
+  dplyr::select(Id, SalePrice)
+
+write.csv(output_data, file = "predictions.csv", row.names=FALSE)
+```
+
+
+* * *
+
+## Part 4 Conclusion
+
+The model performs fairly well on ames data set. With R2 score of more than 0.87.  
+But there is still rooms for improvements:  
+
+- The RMSE is still high.  
+- There are potential outliers that the model can't resolve.  
+- The coverage probability is still below 95%.  
+
+The shortcomings are from lacking of domain knowledge. If SMEs are available, they can:  
+
+- Evaluate questionable records and provide valuable insights. From there, those records can be edited or removed accordingly, or some definite factors can be discovered.  
+- Evaluate the model for adding or removing predictors.  
+
+* * *

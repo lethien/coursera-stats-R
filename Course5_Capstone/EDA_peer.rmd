@@ -1,0 +1,234 @@
+```{r setup, include=FALSE}
+options(width=100)
+```
+
+---
+title: "Peer Assessment I"
+output:
+  html_document: 
+    pandoc_args: [
+      "--number-sections",
+    ]
+---
+
+
+First, let us load the data and necessary packages:
+
+```{r load, message = FALSE}
+load("ames_train.Rdata")
+library(MASS)
+library(dplyr)
+library(ggplot2)
+```
+
+#
+Make a labeled histogram (with 30 bins) of the ages of the houses in the data set, and describe the distribution.
+
+
+
+```{r Q1}
+# type your code for Question 1 here, and Knit
+ames_age <- ames_train %>%
+  mutate(age = 2019 - Year.Built) %>%
+  select(age)
+summary(ames_age)
+ggplot(ames_age, aes(age)) +
+  geom_histogram(color = "black", fill = "green", bins = 30) +
+  labs(title = "Ages of houses (Current year 2019)", x = "Age", y = "Count") +
+  geom_vline(aes(xintercept=median(age)), linetype = "dashed") +
+  geom_text(x=median(ames_age$age) + 12, y=200, label=paste("Median: ", median(ames_age$age)))
+```
+
+
+* * *
+
+The distribution of ages of houses in Ames, Iowa is right-skewed and multimodal.  
+Age values range from 18 to 147 years old.  
+50% of houses is 44 years old or newer.  
+
+* * *
+
+
+#
+The mantra in real estate is "Location, Location, Location!" Make a graphical display that relates a home price to its neighborhood in Ames, Iowa. Which summary statistics are most appropriate to use for determining the most expensive, least expensive, and most heterogeneous (having the most variation in housing price) neighborhoods? Report which neighborhoods these are based on the summary statistics of your choice. Report the value of your chosen summary statistics for these neighborhoods.
+
+
+```{r Q2}
+# type your code for Question 2 here, and Knit
+ames_price <- ames_train %>%
+  group_by(Neighborhood) %>%
+  summarise(Median = median(price), Sd = sd(price))
+
+ggplot(ames_price, aes(x = Neighborhood, y = Median, label = paste("$",round(Median, 2)))) +
+  geom_bar(color = "black", fill = "green", stat = "identity") +
+  geom_text(angle = 90, hjust = 1.1, vjust = 0.5) +
+  labs(title = "Median price in Ames Neighborhood", y = "Median price") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0, vjust = 0.5))
+
+ggplot(ames_price, aes(x = Neighborhood, y = Sd, label = round(Sd, 2))) +
+  geom_bar(color = "black", fill = "green", stat = "identity") +
+  geom_text(angle = 90, hjust = 1.1, vjust = 0.5) +
+  labs(title = "Standard Deviation of price in Ames Neighborhood", y = "Standard Deviation of price") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0, vjust = 0.5))
+
+```
+
+
+* * *
+
+Median will be used to compare neighborhoods since it is more resilient to outliers than Mean.  
+Heterogeneous, which is variety in values, can be determined by examing the standard deviation of price.  
+
+Based on the bar charts:  
+
+- The most expensive neighborhood is StoneBr with the Median price of $340,691.5.
+- The least expensive neighborhood is MeadowV with the Median price of $85,750.0.
+- The most heterogeneous is StoneBr with the standard deviation of price of 123,459.1.
+
+* * *
+
+# 
+
+Which variable has the largest number of missing values? Explain why it makes sense that there are so many missing values for this variable.
+
+```{r Q3}
+# type your code for Question 3 here, and Knit
+sort(sapply(ames_train, function(y) sum(length(which(is.na(y))))), decreasing= TRUE)
+```
+
+
+* * *
+
+The variable with largest missing values is Pool.QC, which stands for Pool quality.  
+This makes sense since the pool is not a common feature in most household.  
+Checking the data, only 3 houses have Pool.Area greater than 0. All other houses don't have pool, so Pool.QC variable can't be filled.
+
+* * *
+
+#
+
+We want to predict the natural log of the home prices. Candidate explanatory variables are lot size in square feet (Lot.Area), slope of property (Land.Slope), original construction date (Year.Built), remodel date (Year.Remod.Add), and the number of bedrooms above grade (Bedroom.AbvGr). Pick a model selection or model averaging method covered in the Specialization, and describe how this method works. Then, use this method to find the best multiple regression model for predicting the natural log of the home prices.
+
+```{r load_libs, message=F}
+library(BAS)
+```
+
+
+```{r Q4}
+# type your code for Question 4 here, and Knit
+bma_model <- bas.lm(log(price) ~ Lot.Area + Land.Slope + Year.Built + Year.Remod.Add + Bedroom.AbvGr, 
+                    data = ames_train,
+                    prior = "ZS-null", 
+                    modelprior = uniform())
+summary(bma_model)
+best_model <- predict(bma_model, estimator = 'BPM', se.fit = TRUE)
+variable.names(best_model)
+```
+
+* * *
+
+Bayesian is chosen over Frequentist approach because it perform better on small samples. And it can reduce the variance as well as getting the credible interval of the prediction.  
+And since our purpose is to predict the log of price, Bayesian Model Averaging will be the model selection method and Best Prediction Model as the estimator.  
+As the result, the model will contain Lot.Area, Land.Slope, Year.Built, Year.Remod.Add and Bedroom.AbvGr.  
+The coefficients of those variables:  
+```{r model_95_ci}
+confint(coefficients(bma_model))
+```
+
+
+* * *
+
+#
+
+Which home has the largest squared residual in the previous analysis (Question 4)? Looking at all the variables in the data set, can you explain why this home stands out from the rest (what factors contribute to the high squared residual and why are those factors relevant)?
+
+
+```{r Q5}
+# type your code for Question 5 here, and Knit
+squared_residuals <- (best_model$fit - log(ames_train$price)) ** 2
+squared_residuals_max_index <- which.max(squared_residuals)
+print(paste("Residual: ", max(squared_residuals)))
+print(paste("Predicted log price: ", best_model$fit[squared_residuals_max_index]))
+print(paste("Actual log price: ", log(slice(ames_train, squared_residuals_max_index)$price)))
+
+slice(ames_train %>% 
+        mutate(log_price = log(price)) %>%
+        select(PID, log_price, Lot.Area, Land.Slope, Year.Built, Year.Remod.Add, Bedroom.AbvGr) %>%
+        mutate(Position = squared_residuals_max_index), squared_residuals_max_index)
+```
+
+
+* * *
+
+The house at position 428 (PID: 902207130) has the largest squared residual (4.37).  
+One possible factor that contribute to such large error is the Lot.Area is so large for its price.  
+Comparing to other houses in the dataset:  
+```{r compare_price_per_sf}
+print(paste("Log Price per Lot Area Square feet of house 428: ", 9.456341 / 9656))
+print("Distribution of Log Price per Lot Area Square feet: ")
+summary(log(ames_train$price)/ames_train$Lot.Area)
+```
+We can see that our house lies in the 1st quantile of the distribution.  
+
+* * *
+
+#
+
+Use the same model selection method you chose in Question 4 to again find the best multiple regression model to predict the natural log of home prices, but this time **replacing Lot.Area with log(Lot.Area)**. Do you arrive at a model including the same set of predictors?
+
+
+```{r Q6}
+# type your code for Question 6 here, and Knit
+bma_model_2 <- bas.lm(log(price) ~ log(Lot.Area) + Land.Slope + Year.Built + Year.Remod.Add + Bedroom.AbvGr, 
+                    data = ames_train,
+                    prior = "ZS-null", 
+                    modelprior = uniform())
+summary(bma_model_2)
+best_model_2 <- predict(bma_model_2, estimator = 'BPM', se.fit = TRUE)
+variable.names(best_model_2)
+```
+
+* * *
+
+Replacing Lot.Area with log(Lot.Area) resulted in a different model, with Land.Slope variable is not a predictor anymore.  
+The new model contains Lot.Area, Year.Built, Year.Remod.Add and Bedroom.AbvGr.  
+
+* * *
+
+#
+
+Do you think it is better to log transform Lot.Area, in terms of assumptions for linear regression? Make graphs of the predicted values of log home price versus the true values of log home price for the regression models selected for Lot.Area and log(Lot.Area). Referencing these two plots, provide a written support that includes a quantitative justification for your answer in the first part of question 7.
+
+```{r Q7}
+# type your code for Question 7 here, and Knit
+true_vs_predicted_using_area <- as.data.frame(cbind(log(ames_train$price), best_model$fit))
+plot_area <- ggplot(true_vs_predicted_using_area, aes(x = log(ames_train$price), y = best_model$fit)) +
+  geom_point(color = "green") +
+  labs(title = "Using Lot.Area", x = "True Log price", y = "Predicted Log price") +
+  geom_abline(intercept = 0, slope = 1, size = 1, linetype = "dashed") +
+  xlim(9, 14) + ylim(9, 14)
+
+true_vs_predicted_using_log_area <- as.data.frame(cbind(log(ames_train$price), best_model_2$fit))
+plot_log_area <- ggplot(true_vs_predicted_using_area, aes(x = log(ames_train$price), y = best_model_2$fit)) +
+  geom_point(color = "green") +
+  labs(title = "Using Log Lot.Area", x = "True Log price", y = "Predicted Log price") +
+  geom_abline(intercept = 0, slope = 1, size = 1, linetype = "dashed") +
+  xlim(9, 14) + ylim(9, 14)
+
+gridExtra::grid.arrange(plot_area, plot_log_area, ncol=2)
+```
+
+* * *
+
+Based on the graphs, using Log of Lot.Area doesn't seem to help much:  
+
+- The outlier which we considered in Q5 still exist.
+- The residuals doesn't seem to be reduced much.
+
+Based on the models R2 score, the second model have a slightly higher score than the first (0.6031 compared to 0.5623). Furthermore, the number of predictors in the second model is less than the first (4 compared to 5).  
+
+Although using Log of Lot.Area doesn't improve the prediction significantly, the second model, which log the Lot.Area, is the better model.  
+
+
+* * *
+###
